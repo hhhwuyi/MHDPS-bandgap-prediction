@@ -179,6 +179,80 @@ for f in feature_columns:
     all_imp.append({'feature': f, 'importance': base_importance[best_name].get(f, 0)})
 all_imp_df = pd.DataFrame(all_imp).sort_values('importance', ascending=False)
 
+original_base_results = base_results
+original_base_models = base_models
+original_base_importance = base_importance
+
+
+def manual_rfe_with_test_f1(estimator):
+    current_features = list(feature_columns)
+    results = []
+    best_result = None
+    best_model = None
+
+    while current_features:
+        X_tr = X_train_df[current_features]
+        X_te = X_test_df[current_features]
+        X_tr_res, y_tr_res = SMOTE(random_state=42).fit_resample(X_tr, y_train)
+        model = estimator.__class__(**estimator.get_params())
+        model.fit(X_tr_res, y_tr_res)
+        y_pred = model.predict(X_te)
+        y_proba = model.predict_proba(X_te)[:, 1]
+
+        if len(current_features) > 1:
+            if hasattr(model, 'feature_importances_'):
+                importances = model.feature_importances_
+            elif hasattr(model, 'coef_'):
+                importances = np.abs(model.coef_[0])
+            else:
+                importances = np.ones(len(current_features))
+            min_idx = int(np.argmin(importances))
+            removed_feature = current_features[min_idx]
+        else:
+            min_idx = None
+            removed_feature = None
+
+        result = {
+            'step': len(feature_columns) - len(current_features) + 1,
+            'n_features': len(current_features),
+            'test_f1': f1_score(y_test, y_pred),
+            'test_accuracy': accuracy_score(y_test, y_pred),
+            'test_precision': precision_score(y_test, y_pred),
+            'test_recall': recall_score(y_test, y_pred),
+            'test_roc_auc': roc_auc_score(y_test, y_proba),
+            'features': list(current_features),
+            'removed_feature': removed_feature
+        }
+        results.append(result)
+
+        if best_result is None or result['test_f1'] > best_result['test_f1']:
+            best_result = result.copy()
+            best_model = model
+
+        if min_idx is None:
+            break
+        current_features.pop(min_idx)
+
+    return results, best_result, best_model
+
+
+base_models = {}
+base_results = {}
+rfe_summary = {}
+
+for name, estimator in [
+    ('RandomForest', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)),
+    ('XGBoost', XGBClassifier(n_estimators=100, random_state=42, eval_metric='logloss', n_jobs=-1)),
+    ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=42))
+]:
+    results, best, fitted_model = manual_rfe_with_test_f1(estimator)
+    base_models[name] = fitted_model
+    base_results[name] = best
+    rfe_summary[name] = {'results': results, 'best': best}
+
+with open('rfe_test_f1_classification_results.pkl', 'wb') as f:
+    pickle.dump(rfe_summary, f)
+
 def create_stacking_model():
     return StackingClassifier(
         estimators=[
@@ -280,7 +354,7 @@ feature_selector = {
     'stacking_features': stacking_features,
     'all_features': feature_columns,
     'best_base_model': best_name,
-    'best_base_model_f1': base_results[best_name]['test_f1'],
+    'best_base_model_f1': original_base_results[best_name]['test_f1'],
     'base_models_results': base_results,
     'stacking_results': best_stacking
 }

@@ -5,7 +5,7 @@ import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
-df = pd.read_csv('4373.csv')
+df = pd.read_csv('3136.csv')
 formulas = df['formula'].copy() if 'formula' in df.columns else df['Formula'].copy() if 'Formula' in df.columns else pd.Series(['Material_{}'.format(i+1) for i in range(len(df))])
 
 drop_cols = ['formula', 'Formula']
